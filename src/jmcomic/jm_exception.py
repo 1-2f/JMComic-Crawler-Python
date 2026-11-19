@@ -1,7 +1,7 @@
 # 该文件存放jmcomic的异常机制设计和实现
 from __future__ import annotations
 
-from typing import NoReturn
+from typing import Callable, NoReturn, Pattern, Type
 
 from .jm_entity import *
 
@@ -94,6 +94,35 @@ class PartialDownloadFailedException(JmcomicException):
         return self.from_context(ExceptionTool.CONTEXT_KEY_DOWNLOADER)
 
 
+class DownloadCancelledException(JmcomicException):
+    description = '下载任务已取消'
+
+    def __init__(self, msg='download cancelled', context=None):
+        """
+        按 JMComic 异常的统一结构创建下载取消异常。
+        """
+        msg = str(msg or 'download cancelled')
+        context = dict(context or {})
+        context.setdefault(ExceptionTool.CONTEXT_KEY_REASON, msg)
+        super().__init__(msg, context)
+
+    @property
+    def control(self):
+        return self.from_context(ExceptionTool.CONTEXT_KEY_CONTROL)
+
+    @property
+    def reason(self) -> str:
+        return str(self.context.get(ExceptionTool.CONTEXT_KEY_REASON, 'download cancelled'))
+
+    @property
+    def completed_results(self):
+        return list(self.context.get(ExceptionTool.CONTEXT_KEY_COMPLETED_RESULTS) or [])
+
+    @property
+    def unfinished_ids(self):
+        return list(self.context.get(ExceptionTool.CONTEXT_KEY_UNFINISHED_IDS) or [])
+
+
 class ExceptionTool:
     """
     抛异常的工具
@@ -107,6 +136,10 @@ class ExceptionTool:
     CONTEXT_KEY_MISSING_JM_ID = 'missing_jm_id'
     CONTEXT_KEY_DOWNLOADER = 'downloader'
     CONTEXT_KEY_RETRY_ERRORS = 'retry_errors'
+    CONTEXT_KEY_CONTROL = 'control'
+    CONTEXT_KEY_REASON = 'reason'
+    CONTEXT_KEY_COMPLETED_RESULTS = 'completed_results'
+    CONTEXT_KEY_UNFINISHED_IDS = 'unfinished_ids'
 
     @classmethod
     def raises(cls,

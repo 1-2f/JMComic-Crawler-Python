@@ -17,7 +17,7 @@ Feature 用于封装复杂、高级的功能特性，例如pdf导出插件，以
     download_album(id, option, extra=Feature.export_pdf + Feature.export_zip)
 """
 from .jm_plugin import *
-from .jm_task_context import get_jm_task_context
+from .jm_task_context import JTC
 
 
 class Feature:
@@ -37,7 +37,7 @@ class Feature:
     @property
     def jm_task_context(self) -> dict:
         """Return the current invocation's isolated task-context snapshot."""
-        return get_jm_task_context()
+        return JTC.get_context()
 
     def should_invoke(self, when: str) -> bool:
         """
@@ -105,7 +105,8 @@ class PluginFeature(Feature):
         根据当前钩子动态适配 filename_rule 等参数。
         """
         pclass: type = JmModuleConfig.REGISTRY_PLUGIN.get(self.plugin_key)
-        ExceptionTool.require_true(pclass is not None, f'PluginFeature 引用了未注册的插件: {self.plugin_key}, when {when}')
+        ExceptionTool.require_true(pclass is not None,
+                                   f'PluginFeature 引用了未注册的插件: {self.plugin_key}, when {when}')
 
         plugin_kwargs: dict = self._adapt_plugin_kwargs(option, when)
 
@@ -121,8 +122,9 @@ class PluginFeature(Feature):
         根据 when 动态确定以下插件参数:
         filename_rule
         """
+        from .jm_plugin import JmOptionPlugin
         kwargs = self.kwargs.copy()
-        kwargs.setdefault('filename_rule', '[JM{Aid}]{Atitle}' if when == 'after_album' else '[JM{Pid}]{Ptitle}')
+        kwargs.setdefault('filename_rule', JmOptionPlugin.default_export_filename_rule(when == 'after_album'))
 
         # 动态适配导出目录：当且仅当用户未自定义目录时，根据插件类型自动将 dir 导向 option.dir_rule.base_dir
         if self.plugin_key == 'zip':

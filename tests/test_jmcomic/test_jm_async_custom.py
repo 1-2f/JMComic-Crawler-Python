@@ -3,11 +3,14 @@ Async 自定义 Client 注册对称性测试 —— 对标 test_jm_custom.py
 
 验证 REGISTRY_ASYNC_CLIENT 注册、域名回退、异常行为与 sync 一致。
 """
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
 from test_jmcomic import *
+
 from jmcomic.jm_async_client import AsyncJmApiClient
 from jmcomic.jm_async_downloader import JmAsyncDownloader
 from jmcomic.jm_client_interface import AsyncJmcomicClient
-import asyncio
 
 
 class Test_Async_Custom(JmAsyncTestConfigurable):
@@ -136,6 +139,8 @@ class Test_Async_Custom(JmAsyncTestConfigurable):
             configured_opt.client.src_dict['domain'] = {'api': list(expected)}
             default_opt = self.new_option()
             default_opt.client.src_dict['domain'] = {'api': list(JmModuleConfig.DOMAIN_API_LIST)}
+            for o in (opt, configured_opt, default_opt):
+                o.client.src_dict['async_impl'] = 'async_api'
 
             clients = [
                 opt.new_jm_async_client(domain_list=expected),
@@ -193,6 +198,8 @@ class Test_Async_Custom(JmAsyncTestConfigurable):
             first_option.client.postman.meta_data.src_dict['cookies'] = {'custom': 'cookie'}
             second_option = self.new_option()
             second_option.client.postman.meta_data.src_dict.pop('cookies', None)
+            for o in (first_option, second_option):
+                o.client.src_dict['async_impl'] = 'async_api'
 
             first = first_option.new_jm_async_client()
             second = second_option.new_jm_async_client()
@@ -213,7 +220,7 @@ class Test_Async_Custom(JmAsyncTestConfigurable):
             AsyncJmApiClient._has_setup_domain = old_setup_domain
 
     def test_async_downloader_cleanup_when_setup_fails(self):
-        """真实 AsyncSession 初始化失败时，downloader 应回收 client 和线程池"""
+        """真实会话初始化失败时，也要关闭 Downloader 自建线程池。"""
         old_auto_update = JmModuleConfig.FLAG_API_CLIENT_AUTO_UPDATE_DOMAIN
         old_require_cookies = JmModuleConfig.FLAG_API_CLIENT_REQUIRE_COOKIES
         old_app_cookies = JmModuleConfig.APP_COOKIES
@@ -222,6 +229,7 @@ class Test_Async_Custom(JmAsyncTestConfigurable):
 
         loop = asyncio.new_event_loop()
         downloader = None
+        fake_pool = None
         try:
             JmModuleConfig.FLAG_API_CLIENT_AUTO_UPDATE_DOMAIN = False
             JmModuleConfig.FLAG_API_CLIENT_REQUIRE_COOKIES = True
@@ -241,14 +249,16 @@ class Test_Async_Custom(JmAsyncTestConfigurable):
                 photo_concurrency=1,
                 decode_worker=1,
             )
+            fake_pool = downloader._decode_pool = ThreadPoolExecutor(max_workers=1)
             with self.assertRaises(RequestRetryAllFailException):
                 loop.run_until_complete(downloader.__aenter__())
 
             self.assertIsNone(downloader.client)
-            self.assertTrue(downloader._decode_pool._shutdown)
+            self.assertIsNone(downloader._decode_pool)
+            self.assertTrue(fake_pool._shutdown)
         finally:
-            if downloader is not None and not downloader._decode_pool._shutdown:
-                downloader.shutdown()
+            if fake_pool is not None and not fake_pool._shutdown:
+                fake_pool.shutdown(wait=False)
             loop.close()
             JmModuleConfig.FLAG_API_CLIENT_AUTO_UPDATE_DOMAIN = old_auto_update
             JmModuleConfig.FLAG_API_CLIENT_REQUIRE_COOKIES = old_require_cookies

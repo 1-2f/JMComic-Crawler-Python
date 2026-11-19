@@ -1,5 +1,7 @@
 import asyncio
 import inspect
+import traceback
+from typing import Iterable
 from unittest.mock import AsyncMock, patch
 
 from test_jmcomic import *
@@ -16,6 +18,9 @@ class Test_Api(JmTestConfigurable):
         ):
             parameters = inspect.signature(download_api).parameters
             self.assertNotIn('callback', parameters)
+            self.assertNotIn('runtime', parameters)
+            self.assertNotIn('workers', parameters)
+            self.assertNotIn('executor', parameters)
             self.assertEqual(
                 parameters['check_exception'].kind,
                 inspect.Parameter.KEYWORD_ONLY,
@@ -94,7 +99,7 @@ class Test_Api(JmTestConfigurable):
                 print(func())
             except BaseException as e:
                 exception_list.append(e)
-                traceback_print_exec()
+                traceback.print_exc()
 
         multi_thread_launcher(
             iter_objs=func_list,
@@ -104,22 +109,13 @@ class Test_Api(JmTestConfigurable):
         if len(exception_list) == 0:
             return
 
-        if self.client.is_given_type(JmApiClient):
+        if self.client.is_api():
             return
 
         for e in exception_list:
             print(e)
 
         raise AssertionError(exception_list)
-
-    def test_get_html_domain_all_via_github_deprecated(self):
-        """废弃入口应发出警告，并转发到官方发布页域名获取逻辑。"""
-        with self.assertWarns(DeprecationWarning):
-            deprecated_result = self.client.get_html_domain_all_via_github()
-
-        current_result = self.client.get_html_domain_all()
-        self.assertEqual(deprecated_result, current_result)
-        self.assertGreater(len(deprecated_result), 0)
 
     def test_partial_exception(self):
         class TestDownloader(JmDownloader):

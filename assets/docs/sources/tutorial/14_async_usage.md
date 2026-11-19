@@ -19,10 +19,10 @@ import jmcomic
 
 async def main():
     # 异步下载单个本子
-    album, downloader = await jmcomic.download_album_async('438696')
-
+    result = await jmcomic.download_album_async('438696')
+    print(result.detail.save_path)
     # 返回的 downloader 已释放网络连接和线程池，只用于读取下载结果
-    print(downloader.download_failed_image)
+    print(result.downloader.download_failed_image)
     
     # 异步下载单章节
     await jmcomic.download_photo_async('438696')
@@ -36,7 +36,7 @@ if __name__ == '__main__':
 
 ## 2. 使用 Option 定制化异步下载
 
-和同步版本一样，你可以配合 `option` 对象来定制网络请求、代理、下载路径等：
+和同步版本一样，你可以配合 `option` 对象来定制网络请求、代理、下载路径、登录账号（`auth`）等：
 
 ```python
 import asyncio
@@ -168,7 +168,8 @@ from jmcomic import JmOption
 
 async def main():
     async with JmOption.default().new_jm_async_client() as cl:
-        # 先登录
+        # 局部登录：仅当前 cl 生效
+        # 若需 option 全局登录，可在创建 client 前调用 await option.login_with_option_auth_async()
         await cl.login('你的用户名', '你的密码')
 
         # 使用 async for 遍历整个收藏夹的所有页
@@ -248,21 +249,49 @@ asyncio.run(main())
 
 ## 9. 关于 `async_impl` 配置
 
-注意：仅仅在 `option.yml` 中增加配置**并不能**让代码自动变成异步，你必须要在代码中改为调用 `_async` 相关方法（如上文所示）。
+> [!IMPORTANT]
+> 仅仅在 `option.yml` 中增加配置**并不能**让代码自动变成异步，你必须要在代码中改为调用 `_async` 相关方法（如上文所示）。
 
-`async_impl`目前可以不配置，因为配置的作用仅仅是指定底层使用哪种API实现。目前的唯一实现是 `async_api`：
+`async_impl` 配置和 `impl`类似，同样决定 async 底层走 `网页端` 还是 `APP端`。
 
 ```yaml
-# myoption.yml
 client:
   impl: html
-  # 指定异步客户端的底层实现类 (目前仅有: async_api)
-  async_impl: async_api
+  # 异步客户端实现，默认 null，无需配置（会自动映射上面的 impl）
+  # 也可显式指定 async_api 或 async_html
+  async_impl: null
 ```
 
-## 10. 查看下载耗时
 
-异步下载完成后，可以直接查看自己总共等了多久，也可以继续查看具体是哪个本子、章节或图片比较慢。所有 `duration` 的单位都是秒。
+如果你配置过 `impl`字段，可以不配置 `async_impl`，因为`async_impl`会映射`impl`配置项。
+
+比如你配置了 `impl: html`，然后你代码使用 async api，async底层使用的就是 `async_html` 的client。`impl=api`同理。
+
+如果你需要`async_impl`和`impl`使用不同值，可以通过代码来控制，不走配置
+
+```python
+import asyncio
+from jmcomic import JmOption, download_album_async
+
+
+async def main():
+    # 下载场景
+    option = JmOption.default()
+    option.client.async_impl = 'async_html'  # 写 'html' 也可以
+    await download_album_async(123, option)
+
+    # 使用底层 client 场景
+    async with JmOption.default().new_jm_async_client(impl='async_html') as cl:  # 写 'html' 也可以
+        album = await cl.get_album_detail(123)
+        print(album.title)
+
+
+asyncio.run(main())
+```
+
+## 10. 下载返回值
+
+用法与同步版本完全一致，返回的 `DownloadResult` 包含了本子实体、保存路径、耗时以及下载清单（`manifest`）等专属字段：
 
 ```python
 import asyncio
@@ -273,25 +302,67 @@ async def main():
     result = await jmcomic.download_album_async('438696')
     album = result.detail
 
-    # 从调用 download_album_async 到返回，总共等了多久
-    print(f'总共等待: {result.duration:.3f} 秒')
+    # 1. 实体与保存路径
+    print(f'本子: JM{album.id} - {album.title}')
+    print(f'保存目录: {album.save_path}')
 
-    # 如果下载比较慢，可以继续查看具体慢在哪里
-    print(f'下载本子用了: {album.duration:.3f} 秒')
-    for photo in album:
-        print(f'下载章节 {photo.id} 用了: {photo.duration:.3f} 秒')
-        for image in photo:
-            print(f'处理图片 {image.img_file_name} 用了: {image.duration:.3f} 秒')
+    # 2. 耗时统计（单位：秒）
+    print(f'总耗时: {result.duration:.3f} 秒, 本子处理耗时: {album.duration:.3f} 秒')
+
+    # 3. 下载清单 manifest
+    manifest = result.manifest
+    print(f'全部本子图片的磁盘路径: {manifest.image_filepath_list}')
 
 
 asyncio.run(main())
 ```
 
-| 字段 | 它告诉你什么 |
-| --- | --- |
-| `result.duration` | 从调用异步下载方法到返回，你总共等了多久 |
-| `album.duration` | 下载这个本子花了多久，包含获取本子信息和整理下载结果 |
-| `photo.duration` | 下载这个章节花了多久，包含获取或补全章节信息 |
-| `image.duration` | 处理这张图片花了多久，包含检查缓存、下载、解密和保存 |
+## 11. 取消下载
 
-下载器可能同时处理多个章节或多张图片，所以把它们的耗时全部相加，不会得到本子的耗时，这是正常现象。同步下载中的这些字段含义相同。
+下面示例代码模拟了一个 GUI 场景中，有两个按钮，一个开始下载，一个取消下载，基于 `DownloadControl` 实现。
+
+```python
+import asyncio
+from jmcomic import DownloadCancelledException, DownloadControl, download_album_async, jm_task_context
+
+# 界面持有的当前下载控制器与任务
+current_control = None
+current_task = None
+
+
+# 按钮 1：点击【开始下载】
+def on_btn_download_click(album_id: str) -> asyncio.Task:
+    global current_control, current_task
+    current_control = DownloadControl()
+
+    async def _run():
+        try:
+            with jm_task_context(control=current_control):
+                await download_album_async(album_id)
+        except DownloadCancelledException as e:
+            print(f'[UI 提示] 下载已取消: {e.reason}')
+
+    current_task = asyncio.create_task(_run())
+    return current_task
+
+
+# 按钮 2：点击【取消下载】
+def on_btn_cancel_click():
+    if current_control:
+        current_control.cancel("用户点击了界面的取消按钮")
+
+
+async def main():
+    # 模拟用户点击【开始下载】
+    task = on_btn_download_click('123456')
+
+    # 模拟用户在界面等待一段时间后，点击了【取消下载】
+    await asyncio.sleep(2)
+    on_btn_cancel_click()
+
+    # 等待下载任务响应取消并安全收尾
+    await task
+
+
+asyncio.run(main())
+```
